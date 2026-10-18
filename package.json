@@ -1,0 +1,23 @@
+{
+  "name": "healthsync-root",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:packages": "npm --workspace=@healthsync/shared-types run build && npm --workspace=@healthsync/validation run build",
+    "build": "npm run build:packages && npm --workspace=@healthsync/api run build && npm --workspace=@healthsync/web run build",
+    "dev": "concurrently -k -n \"API,WEB\" -c \"blue,green\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm --workspace=@healthsync/api run dev",
+    "dev:web": "npm --workspace=@healthsync/web run dev",
+    "test": "npm --workspace=@healthsync/api run test",
+    "test:ai": "npm --workspace=@healthsync/api run test:ai",
+    "seed": "npm --workspace=@healthsync/api run prisma:seed",
+    "start": "concurrently -n \"API,WEB\" -c \"blue,green\" \"npm --workspace=@healthsync/api run start:prod\" \"npm --workspace=@healthsync/web run start\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

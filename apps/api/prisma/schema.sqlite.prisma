@@ -1,0 +1,513 @@
+// HealthSync SQLite Prisma Schema (for instant local standalone runs without PostgreSQL service)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String                   @id @default(uuid())
+  email                String                   @unique
+  passwordHash         String
+  firstName            String
+  lastName             String
+  phoneNumber          String?
+  role                 String                   @default("PATIENT")
+  isActive             Boolean                  @default(true)
+  isMfaEnabled         Boolean                  @default(false)
+  mfaSecret            String?
+  avatarUrl            String?
+  patientProfile       PatientProfile?
+  doctorProfile        DoctorProfile?
+  organizationMembers  OrganizationMembership[]
+  accessAuditActor     AccessAuditEvent[]       @relation("ActorAuditEvents")
+  notifications        Notification[]
+  aiConversations      AIConversation[]
+  dataExportRequests   DataExportRequest[]
+  uploadedDocuments    MedicalDocument[]        @relation("UserUploadedDocuments")
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+}
+
+model PatientProfile {
+  id                      String                   @id @default(uuid())
+  userId                  String                   @unique
+  user                    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dateOfBirth             DateTime
+  gender                  String
+  bloodGroup              String
+  address                 String
+  city                    String
+  state                   String
+  postalCode              String
+  heightCm                Float?
+  weightKg                Float?
+  emergencyContacts       EmergencyContact[]
+  medicalRecords          MedicalRecord[]
+  medicalDocuments        MedicalDocument[]
+  prescriptions           Prescription[]
+  allergies               Allergy[]
+  conditions              Condition[]
+  encounters              Encounter[]
+  consentGrants           ConsentGrant[]
+  accessRequests          AccessRequest[]
+  accessAuditEvents       AccessAuditEvent[]       @relation("PatientAuditEvents")
+  appointments            Appointment[]
+  accessCode              String?                  @default("HS-8821")
+  dailyHealthLogs         DailyHealthLog[]
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+}
+
+model DoctorProfile {
+  id                   String                   @id @default(uuid())
+  userId               String                   @unique
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  licenseNumber        String                   @unique
+  experienceYears      Int                      @default(0)
+  bio                  String?
+  consultationFee      Float                    @default(0.0)
+  verificationStatus   String                   @default("UNVERIFIED")
+  specialties          ProviderSpecialty[]
+  verifications        ProviderVerification[]
+  encounters           Encounter[]
+  prescriptions        Prescription[]
+  appointmentSlots     AppointmentSlot[]
+  consentGrants        ConsentGrant[]
+  accessRequests       AccessRequest[]
+  affiliations         DoctorFacilityAffiliation[]
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+}
+
+model HealthcareOrganization {
+  id              String                   @id @default(uuid())
+  name            String
+  code            String                   @unique
+  legalType       String
+  licenseNumber   String                   @unique
+  address         String
+  city            String
+  state           String
+  postalCode      String
+  country         String                   @default("India")
+  contactPhone    String
+  contactEmail    String
+  isVerified      Boolean                  @default(false)
+  memberships     OrganizationMembership[]
+  facilities      HealthcareFacility[]
+  laboratories    Laboratory[]
+  consentGrants   ConsentGrant[]
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+}
+
+model OrganizationMembership {
+  id              String                 @id @default(uuid())
+  userId          String
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId  String
+  organization    HealthcareOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  roleInOrg       String
+  isActive        Boolean                @default(true)
+  joinedAt        DateTime               @default(now())
+
+  @@unique([userId, organizationId])
+}
+
+model ProviderSpecialty {
+  id          String        @id @default(uuid())
+  doctorId    String
+  doctor      DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  name        String
+  isPrimary   Boolean       @default(false)
+}
+
+model MedicalRecord {
+  id           String         @id @default(uuid())
+  patientId    String
+  patient      PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recordType   String
+  title        String
+  summary      String?
+  recordDate   DateTime       @default(now())
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model MedicalDocument {
+  id                   String                          @id @default(uuid())
+  patientId            String
+  patient              PatientProfile                  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  uploadedByUserId     String
+  uploadedByUser       User                            @relation("UserUploadedDocuments", fields: [uploadedByUserId], references: [id])
+  title                String
+  description          String?
+  category             String
+  fileName             String
+  fileSize             Int
+  mimeType             String
+  storageKey           String
+  sha256Hash           String
+  ocrStatus            String                          @default("PENDING")
+  extractedText        String?
+  verificationStatus   String                          @default("UNVERIFIED")
+  verifiedByDoctorId   String?
+  versions             DocumentVersion[]
+  ocrJob               OCRJob?
+  reports              MedicalReport[]
+  createdAt            DateTime                        @default(now())
+  updatedAt            DateTime                        @updatedAt
+}
+
+model MedicalReport {
+  id              String          @id @default(uuid())
+  documentId      String
+  document        MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  testName        String
+  testDate        DateTime
+  laboratoryName  String?
+  metricsJson     String
+  doctorReview    String?
+  isVerified      Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model Prescription {
+  id             String          @id @default(uuid())
+  patientId      String
+  patient        PatientProfile  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId       String
+  doctor         DoctorProfile   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  encounterId    String?
+  encounter      Encounter?      @relation(fields: [encounterId], references: [id])
+  diagnosis      String
+  clinicalNotes  String?
+  issuedAt       DateTime        @default(now())
+  validUntil     DateTime
+  medications    Medication[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model Medication {
+  id              String       @id @default(uuid())
+  prescriptionId  String
+  prescription    Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  name            String
+  dosage          String
+  frequency       String
+  duration        String
+  instructions    String?
+  createdAt       DateTime     @default(now())
+}
+
+model Allergy {
+  id           String         @id @default(uuid())
+  patientId    String
+  patient      PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  allergen     String
+  severity     String
+  reaction     String?
+  diagnosedAt  DateTime?
+  createdAt    DateTime       @default(now())
+}
+
+model Condition {
+  id           String         @id @default(uuid())
+  patientId    String
+  patient      PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  code         String?
+  name         String
+  status       String         @default("ACTIVE")
+  diagnosedAt  DateTime?
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model Encounter {
+  id                     String         @id @default(uuid())
+  patientId              String
+  patient                PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId               String
+  doctor                 DoctorProfile  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  facilityId             String?
+  facility               HealthcareFacility? @relation(fields: [facilityId], references: [id])
+  encounterDate          DateTime       @default(now())
+  chiefComplaint         String
+  assessmentAndPlan      String
+  bloodPressureSystolic  Int?
+  bloodPressureDiastolic Int?
+  heartRateBpm           Int?
+  respiratoryRate        Int?
+  temperatureCelsius     Float?
+  spo2Percentage         Float?
+  prescriptions          Prescription[]
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+}
+
+model ConsentGrant {
+  id                   String                          @id @default(uuid())
+  patientId            String
+  patient              PatientProfile                  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId             String
+  doctor               DoctorProfile                   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  organizationId       String?
+  organization         HealthcareOrganization?         @relation(fields: [organizationId], references: [id])
+  purpose              String
+  allowedCategories    String
+  status               String                          @default("ACTIVE")
+  expiresAt            DateTime
+  revokedAt            DateTime?
+  revocationReason     String?
+  createdAt            DateTime                        @default(now())
+  updatedAt            DateTime                        @updatedAt
+}
+
+model AccessRequest {
+  id                  String         @id @default(uuid())
+  patientId           String
+  patient             PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId            String
+  doctor              DoctorProfile  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  purpose             String
+  requestedCategories String
+  reason              String
+  status              String         @default("PENDING")
+  requestedAt         DateTime       @default(now())
+  respondedAt         DateTime?
+  createdAt           DateTime       @default(now())
+}
+
+model AccessAuditEvent {
+  id                     String          @id @default(uuid())
+  actorUserId            String
+  actorUser              User            @relation("ActorAuditEvents", fields: [actorUserId], references: [id])
+  targetPatientId        String?
+  targetPatient          PatientProfile? @relation("PatientAuditEvents", fields: [targetPatientId], references: [id])
+  resourceType           String
+  resourceId             String?
+  action                 String
+  isEmergencyOverride    Boolean         @default(false)
+  overrideJustification  String?
+  ipAddress              String?
+  userAgent              String?
+  status                 String          @default("SUCCESS")
+  denialReason           String?
+  timestamp              DateTime        @default(now())
+}
+
+model DocumentVersion {
+  id              String          @id @default(uuid())
+  documentId      String
+  document        MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  storageKey      String
+  sha256Hash      String
+  changeSummary   String?
+  createdById     String
+  createdAt       DateTime        @default(now())
+
+  @@unique([documentId, versionNumber])
+}
+
+model Appointment {
+  id                String          @id @default(uuid())
+  patientId         String
+  patient           PatientProfile  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  slotId            String          @unique
+  slot              AppointmentSlot @relation(fields: [slotId], references: [id])
+  status            String          @default("REQUESTED")
+  reasonForVisit    String
+  notes             String?
+  bookingReference  String          @unique
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+}
+
+model AppointmentSlot {
+  id           String             @id @default(uuid())
+  doctorId     String
+  doctor       DoctorProfile      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  facilityId   String
+  facility     HealthcareFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  startTime    DateTime
+  endTime      DateTime
+  isBooked     Boolean            @default(false)
+  appointment  Appointment?
+  createdAt    DateTime           @default(now())
+}
+
+model HealthcareFacility {
+  id                String                 @id @default(uuid())
+  organizationId    String
+  organization      HealthcareOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name              String
+  type              String
+  address           String
+  city              String
+  state             String
+  postalCode        String
+  latitude          Float
+  longitude         Float
+  contactPhone      String
+  contactEmail      String
+  operatingHours    String
+  specialties       String
+  availableServices String
+  hasEmergencyUnit  Boolean                @default(false)
+  isVerified        Boolean                @default(false)
+  appointmentSlots  AppointmentSlot[]
+  encounters        Encounter[]
+  doctorAffiliations DoctorFacilityAffiliation[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+}
+
+model Laboratory {
+  id              String                 @id @default(uuid())
+  organizationId  String
+  organization    HealthcareOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  licenseNumber   String                 @unique
+  accreditation   String?
+  availableTests  String?
+  address         String?
+  city            String?
+  state           String?
+  postalCode      String?
+  latitude        Float?
+  longitude       Float?
+  contactPhone    String
+  contactEmail    String
+  isVerified      Boolean                @default(false)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+}
+
+model AIConversation {
+  id          String       @id @default(uuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String       @default("Health Consultation")
+  messages    AIMessage[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model AIMessage {
+  id                  String         @id @default(uuid())
+  conversationId      String
+  conversation        AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender              String
+  content             String
+  triageUrgency       String?
+  isRedFlagWarning    Boolean        @default(false)
+  emergencyDirectives String?
+  disclaimer          String         @default("HealthSync Assistant is an informational tool and does not provide formal medical diagnosis or prescription advice.")
+  createdAt           DateTime       @default(now())
+}
+
+model OCRJob {
+  id              String          @id @default(uuid())
+  documentId      String          @unique
+  document        MedicalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  status          String          @default("PENDING")
+  rawText         String?
+  extractedJson   String?
+  errorMessage    String?
+  processingTimeMs Int?
+  createdAt       DateTime        @default(now())
+  completedAt     DateTime?
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  type        String
+  isRead      Boolean  @default(false)
+  linkUrl     String?
+  createdAt   DateTime @default(now())
+}
+
+model EmergencyContact {
+  id           String         @id @default(uuid())
+  patientId    String
+  patient      PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  name         String
+  relationship String
+  phoneNumber  String
+  altPhone     String?
+  createdAt    DateTime       @default(now())
+}
+
+model DoctorFacilityAffiliation {
+  id              String             @id @default(uuid())
+  doctorId        String
+  doctor          DoctorProfile      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  facilityId      String
+  facility        HealthcareFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  consultationFee Float?
+  scheduleDays    String?            // e.g., "Mon, Wed, Fri"
+  roomOrOpdNumber String?            // e.g., "OPD Room 204"
+  isPrimary       Boolean            @default(false)
+  createdAt       DateTime           @default(now())
+
+  @@unique([doctorId, facilityId])
+}
+
+model ProviderVerification {
+  id                  String        @id @default(uuid())
+  doctorId            String
+  doctor              DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  registrySource      String
+  registrationNumber  String
+  verificationDate    DateTime      @default(now())
+  verifiedByAdminId   String?
+  verificationStatus  String        @default("VERIFIED")
+  comments            String?
+  createdAt           DateTime      @default(now())
+}
+
+model DataExportRequest {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exportFormat String    @default("JSON")
+  status       String    @default("PENDING")
+  downloadUrl  String?
+  expiresAt    DateTime?
+  requestedAt  DateTime  @default(now())
+  completedAt  DateTime?
+}
+
+model DailyHealthLog {
+  id                     String         @id @default(uuid())
+  patientId              String
+  patient                PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  logDate                DateTime       @default(now())
+  bloodPressureSystolic  Int?
+  bloodPressureDiastolic Int?
+  bloodSugarFasting      Float?
+  bloodSugarPostPrandial Float?
+  bloodSugarRandom       Float?
+  heartRateBpm           Int?
+  weightKg               Float?
+  temperatureCelsius     Float?
+  spo2Percentage         Float?
+  notes                  String?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  @@index([patientId, logDate])
+}

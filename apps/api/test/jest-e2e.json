@@ -1,0 +1,13 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testRegex": "test/.*\\.spec\\.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@healthsync/shared-types$": "<rootDir>/../../packages/shared-types/src",
+    "^@healthsync/validation$": "<rootDir>/../../packages/validation/src"
+  }
+}
