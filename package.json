@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "build:packages": "npm --workspace=@healthsync/shared-types run build && npm --workspace=@healthsync/validation run build",
+    "build:api": "npm run build:packages && npx --workspace=@healthsync/api prisma generate && npm --workspace=@healthsync/api run build",
+    "start:api": "npm --workspace=@healthsync/api run start:prod",
     "build": "npm run build:packages && npm --workspace=@healthsync/api run build && npm --workspace=@healthsync/web run build",
     "dev": "concurrently -k -n \"API,WEB\" -c \"blue,green\" \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm --workspace=@healthsync/api run dev",
