@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "node -e \"const { execSync } = require('child_process'); execSync('npm --workspace=@healthsync/shared-types run build', {stdio:'inherit'}); execSync('npm --workspace=@healthsync/validation run build', {stdio:'inherit'}); execSync('npx prisma generate', {stdio:'inherit'});\"",
     "build": "npx nest build",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "node dist/main",
