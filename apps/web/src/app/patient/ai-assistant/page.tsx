@@ -20,6 +20,10 @@ import {
   Clock,
   ChevronRight,
   ShieldCheck,
+  Paperclip,
+  FileText,
+  Image as ImageIcon,
+  X,
 } from 'lucide-react';
 
 interface ChatMessage {
@@ -31,6 +35,8 @@ interface ChatMessage {
   emergencyDirectives?: string[];
   disclaimer?: string;
   timestamp?: string;
+  attachedDocName?: string;
+  attachedDocType?: 'PDF' | 'IMAGE';
 }
 
 interface ConversationSummary {
@@ -59,9 +65,106 @@ export default function AIAssistantPage() {
   const [lastFailedDraft, setLastFailedDraft] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<any>(null);
 
+  // Multimodal Document / Prescription Attachment State
+  const [attachedDoc, setAttachedDoc] = useState<{
+    file: File;
+    base64: string;
+    mimeType: string;
+    fileName: string;
+    previewUrl?: string;
+    isPdf: boolean;
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File size exceeds 20MB limit. Please upload a smaller image or PDF.');
+      return;
+    }
+
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        setAttachedDoc({
+          file,
+          base64,
+          mimeType: 'application/pdf',
+          fileName: file.name,
+          previewUrl: undefined,
+          isPdf: true,
+        });
+      };
+      reader.readAsDataURL(file);
+    } else {
+      // Compress image client-side to ensure fast transmission and avoid payload limits
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawUrl = event.target?.result as string;
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1800;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const base64 = compressedDataUrl.split(',')[1];
+            setAttachedDoc({
+              file,
+              base64,
+              mimeType: 'image/jpeg',
+              fileName: file.name,
+              previewUrl: compressedDataUrl,
+              isPdf: false,
+            });
+          } else {
+            const base64 = rawUrl.includes(',') ? rawUrl.split(',')[1] : rawUrl;
+            setAttachedDoc({
+              file,
+              base64,
+              mimeType: file.type || 'image/jpeg',
+              fileName: file.name,
+              previewUrl: rawUrl,
+              isPdf: false,
+            });
+          }
+        };
+        img.src = rawUrl;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const samplePrompts = [
+    {
+      title: 'Analyze Prescription / Report',
+      text: 'Please analyze this medical document (prescription/report) and explain the medications and findings in simple terms.',
+      tag: 'Document Vision',
+      color: 'bg-purple-50 text-purple-700 border-purple-200',
+      lang: 'en',
+    },
     {
       title: 'Longitudinal Report Comparison',
       text: 'Compare my last two reports and show what improved.',
@@ -205,7 +308,7 @@ export default function AIAssistantPage() {
   // 6. Send Message Handler with Draft Preservation & Error Differentiation
   const handleSend = async (messageText?: string) => {
     const textToSend = (messageText !== undefined ? messageText : inputValue).trim();
-    if (!textToSend || isSending) return;
+    if ((!textToSend && !attachedDoc) || isSending) return;
 
     if (!user) {
       setErrorMessage({
@@ -216,11 +319,11 @@ export default function AIAssistantPage() {
       return;
     }
 
-    if (textToSend.length > 2000) {
+    if (textToSend.length > 3000) {
       setErrorMessage({
         type: 'validation',
         title: 'Message Too Long',
-        details: 'Please shorten your message. The maximum allowed length is 2000 characters.',
+        details: 'Please shorten your message. The maximum allowed length is 3000 characters.',
       });
       return;
     }
@@ -228,24 +331,34 @@ export default function AIAssistantPage() {
     setErrorMessage(null);
     setLastFailedDraft(null);
 
+    const docToSend = attachedDoc;
+    const effectiveContent = textToSend || 'Please analyze this medical document (prescription/report) and brief me on its key findings, medications, and instructions in plain terms.';
+
     // Optimistic user message
     const optimisticMsg: ChatMessage = {
       sender: 'USER',
-      content: textToSend,
+      content: effectiveContent,
+      attachedDocName: docToSend?.fileName,
+      attachedDocType: docToSend ? (docToSend.isPdf ? 'PDF' : 'IMAGE') : undefined,
       timestamp: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, optimisticMsg]);
     setInputValue('');
+    setAttachedDoc(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setIsSending(true);
 
     try {
       const res = await apiClient('/api/ai/chat', {
         method: 'POST',
         body: JSON.stringify({
-          message: textToSend,
+          message: effectiveContent,
           conversationId: activeConversationId,
           language: selectedLanguage,
+          attachmentBase64: docToSend?.base64,
+          attachmentMimeType: docToSend?.mimeType,
+          attachmentFileName: docToSend?.fileName,
         }),
       });
 
@@ -256,10 +369,15 @@ export default function AIAssistantPage() {
         setConversations((prev) => {
           const exists = prev.some((c) => c.id === res.data.conversationId);
           if (!exists) {
+            const threadTitle = docToSend?.fileName
+              ? `Doc: ${docToSend.fileName}`
+              : effectiveContent.length > 35
+              ? effectiveContent.substring(0, 32) + '...'
+              : effectiveContent;
             return [
               {
                 id: res.data.conversationId,
-                title: textToSend.length > 35 ? textToSend.substring(0, 32) + '...' : textToSend,
+                title: threadTitle,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
               },
@@ -575,7 +693,21 @@ export default function AIAssistantPage() {
                       : 'bg-slate-50 border border-slate-200 text-slate-800 rounded-tl-none'
                   }`}
                 >
-                  <div className="whitespace-pre-line">{msg.content}</div>
+                  {/* Uploaded document attachment banner in chat bubble */}
+                  {(msg.attachedDocName || msg.content.includes('[Attached Document:')) && (
+                    <div className="mb-2 p-2 rounded-xl bg-black/15 border border-white/20 flex items-center gap-2 text-xs font-semibold">
+                      <FileText className="w-4 h-4 text-teal-200 shrink-0" />
+                      <span className="truncate">
+                        {msg.attachedDocName || msg.content.split('\n\n')[0].replace('[Attached Document: ', '').replace(']', '')}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="whitespace-pre-line">
+                    {msg.content.includes('[Attached Document:')
+                      ? msg.content.split('\n\n').slice(1).join('\n\n')
+                      : msg.content}
+                  </div>
 
                   {msg.disclaimer && (
                     <div className="mt-3 pt-2 border-t border-slate-200/60 text-[10px] text-slate-400 italic">
@@ -631,6 +763,46 @@ export default function AIAssistantPage() {
 
           {/* Input Bar */}
           <div className="p-3 border-t border-slate-200 bg-slate-50/50 rounded-b-2xl">
+            {/* Document Attachment Preview Badge */}
+            {attachedDoc && (
+              <div className="mb-2 p-2.5 px-3 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {attachedDoc.isPdf ? (
+                    <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center shrink-0">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                  ) : attachedDoc.previewUrl ? (
+                    <img
+                      src={attachedDoc.previewUrl}
+                      alt="Prescription preview"
+                      className="w-8 h-8 rounded-lg object-cover border border-teal-300 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center shrink-0">
+                      <ImageIcon className="w-5 h-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-900 truncate">{attachedDoc.fileName}</p>
+                    <p className="text-[10px] text-teal-700 font-semibold">
+                      {attachedDoc.isPdf ? 'PDF Report / Prescription' : 'Prescription Image'} • {(attachedDoc.file.size / 1024).toFixed(0)} KB • Ready for AI Briefing
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachedDoc(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                  className="p-1 rounded-full hover:bg-teal-100 text-slate-400 hover:text-slate-700 transition"
+                  title="Remove document"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -639,22 +811,47 @@ export default function AIAssistantPage() {
               className="flex items-center gap-2"
             >
               <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                className="hidden"
+              />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSending}
+                title="Upload prescription or lab report (PDF/Image) for AI briefing"
+                className={`p-2.5 rounded-xl border transition flex items-center justify-center shrink-0 ${
+                  attachedDoc
+                    ? 'bg-teal-100 border-teal-400 text-teal-800'
+                    : 'border-slate-300 bg-white hover:bg-slate-100 text-slate-600'
+                }`}
+              >
+                <Paperclip className="w-4 h-4 text-brand-600" />
+              </button>
+
+              <input
                 type="text"
                 placeholder={
-                  selectedLanguage === 'hi'
-                    ? 'अपने लक्षण बताएं या कोई स्वास्थ्य प्रश्न पूछें...'
+                  attachedDoc
+                    ? `Ask a question about ${attachedDoc.fileName} (or send directly for full briefing)...`
+                    : selectedLanguage === 'hi'
+                    ? 'लक्षण बताएं, प्रश्न पूछें या पर्चा/रिपोर्ट अपलोड करें...'
                     : selectedLanguage === 'hinglish'
-                    ? 'Apne symptoms batayein ya health question puchein...'
-                    : 'Describe your symptoms or ask a health question in English or Hindi...'
+                    ? 'Symptoms batayein ya prescription/report upload karein...'
+                    : 'Ask a question or upload a prescription/report for AI briefing...'
                 }
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 disabled={isSending}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none bg-white disabled:bg-slate-100"
               />
+
               <button
                 type="submit"
-                disabled={isSending || !inputValue.trim()}
+                disabled={isSending || (!inputValue.trim() && !attachedDoc)}
                 className="px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-xs flex items-center gap-1.5 transition-colors"
               >
                 {isSending ? (

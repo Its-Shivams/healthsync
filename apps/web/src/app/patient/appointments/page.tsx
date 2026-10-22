@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   User,
   DollarSign,
+  Video,
 } from 'lucide-react';
 
 export default function AppointmentsPage() {
@@ -372,10 +373,19 @@ export default function AppointmentsPage() {
                 </div>
               </div>
 
-              <div className="self-end md:self-center">
+              <div className="self-end md:self-center flex flex-col sm:flex-row items-end md:items-center gap-2">
                 <span className="text-[11px] font-mono text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
                   ID: {a.bookingReference}
                 </span>
+                {a.status === 'CONFIRMED' && (
+                  <button
+                    onClick={() => router.push(`/consultation/${a.id}`)}
+                    className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Video className="w-3.5 h-3.5" />
+                    <span>Join Consultation</span>
+                  </button>
+                )}
               </div>
             </div>
           ))}

@@ -52,16 +52,40 @@ export class AIService {
 
   async handleChatMessage(user: any, input: AIChatDto) {
     // 0. Strict input validation & sanitization
-    if (!input || !input.message || typeof input.message !== 'string') {
+    const hasAttachment = Boolean(input?.attachmentBase64 && input?.attachmentMimeType);
+
+    if (!input || (!input.message && !hasAttachment)) {
+      if (typeof input?.message === 'string' && input.message.trim().length === 0) {
+        throw new BadRequestException('Message cannot be empty or whitespace-only');
+      }
       throw new BadRequestException('Message is required and must be a string');
     }
-    const sanitizedMessage = input.message.trim();
-    if (sanitizedMessage.length === 0) {
-      throw new BadRequestException('Message cannot be empty or whitespace-only');
+
+    if (input.message !== undefined && typeof input.message !== 'string') {
+      throw new BadRequestException('Message is required and must be a string');
     }
+
+    let sanitizedMessage = typeof input.message === 'string' ? input.message.trim() : '';
+
+    if (!sanitizedMessage) {
+      if (hasAttachment) {
+        sanitizedMessage = 'Please analyze this attached medical document (prescription or diagnostic report). Break down the document type, key medications/parameters, plain-language patient explanation, precautions, and recommended questions for my doctor.';
+      } else {
+        throw new BadRequestException('Message cannot be empty or whitespace-only');
+      }
+    }
+
     if (sanitizedMessage.length > 2000) {
       throw new BadRequestException('Message length cannot exceed 2000 characters');
     }
+
+    const attachment = hasAttachment
+      ? {
+          base64: input.attachmentBase64!,
+          mimeType: input.attachmentMimeType!,
+          fileName: input.attachmentFileName || 'Medical Document',
+        }
+      : undefined;
 
     // 1. CONVERSATION OWNERSHIP AUTHORIZATION
     let conversationId = input.conversationId;
@@ -76,10 +100,11 @@ export class AIService {
         throw new ForbiddenException('You do not have permission to access this conversation');
       }
     } else {
+      const titleSource = attachment?.fileName ? `Doc: ${attachment.fileName}` : sanitizedMessage;
       const conv = await this.prisma.aIConversation.create({
         data: {
           userId: user.id,
-          title: sanitizedMessage.length > 40 ? sanitizedMessage.substring(0, 37) + '...' : sanitizedMessage,
+          title: titleSource.length > 40 ? titleSource.substring(0, 37) + '...' : titleSource,
         },
       });
       conversationId = conv.id;
@@ -256,6 +281,16 @@ CRITICAL OPERATIONAL RULES:
      f) Conclude every comparison with a dedicated "### Reports Reviewed" section listing each report's exact Title and Test Date.
    - If fewer than two reports are provided in the records when a comparison is requested, explain clearly that at least two reports are required for a comparison, list what is currently on file, and do not invent a second report.
 9. Only reference medical records if specific patient context is provided above. Never claim to have reviewed records that were not provided.
+10. PRESCRIPTION & REPORT DOCUMENT ATTACHMENT BRIEFING:
+   - When the user uploads an image or PDF of a prescription or laboratory diagnostic report:
+     a) Carefully inspect and transcribe all visible details: medications, dosages, lab parameters, reference ranges, and physician notes.
+     b) Structure the output clearly:
+        - "### 📋 Document Overview": Classification (e.g. Outpatient Prescription, Complete Blood Count, Lipid Profile).
+        - "### 💊 Key Medications & Instructions" (for prescriptions): List each medication name, dosage strength, dosing schedule (e.g. 1-0-1, morning/night, with food), and clinical purpose.
+        - "### 🔬 Key Findings & Observations" (for reports): List parameters, values, units, reference ranges, and whether they are normal or flagged.
+        - "### 💡 Plain-Language Summary": Clear, empathetic explanation of what the doctor prescribed or what the test results indicate in everyday language.
+        - "### ⚠️ Patient Precautions & Doctor Questions": Important precautions, potential side-effect warnings to discuss, and targeted questions for their next consultation.
+     c) Emphasize that the patient must follow the original physical prescription and consult their physician before changing any treatment.
 
 ${clinicalContext}`;
 
@@ -278,14 +313,18 @@ ${clinicalContext}`;
     const provider = this.getActiveProvider();
 
     // Provider throws transparent ServiceUnavailableException on failure (No silent fake fallback)
-    const result = await provider.generateResponse(sanitizedMessage, systemPrompt, history);
+    const result = await provider.generateResponse(sanitizedMessage, systemPrompt, history, attachment);
 
     // Save both User message and Assistant response only upon successful generation
+    const userContentToSave = attachment
+      ? `[Attached Document: ${attachment.fileName} (${attachment.mimeType})]\n\n${sanitizedMessage}`
+      : sanitizedMessage;
+
     await this.prisma.aIMessage.create({
       data: {
         conversationId,
         sender: 'USER',
-        content: sanitizedMessage,
+        content: userContentToSave,
       },
     });
 

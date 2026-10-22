@@ -1,5 +1,5 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
-import { IAIProvider, AIMessageHistory, AIProviderResponse } from './ai-provider.interface';
+import { IAIProvider, AIMessageHistory, AIProviderResponse, AIAttachment } from './ai-provider.interface';
 
 @Injectable()
 export class OllamaProvider implements IAIProvider {
@@ -37,16 +37,22 @@ export class OllamaProvider implements IAIProvider {
     prompt: string,
     systemPrompt: string,
     history: AIMessageHistory[],
+    attachment?: AIAttachment,
   ): Promise<AIProviderResponse> {
     const startTime = Date.now();
     const baseUrl = this.getBaseUrl();
     const model = this.getModel();
     const timeoutMs = this.getTimeoutMs();
 
+    const userMessage: any = { role: 'user', content: prompt };
+    if (attachment?.base64 && attachment.mimeType.startsWith('image/')) {
+      userMessage.images = [attachment.base64];
+    }
+
     const messages = [
       { role: 'system', content: systemPrompt },
       ...history,
-      { role: 'user', content: prompt },
+      userMessage,
     ];
 
     const controller = new AbortController();

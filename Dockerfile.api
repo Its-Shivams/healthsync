@@ -1,0 +1,17 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy repo configuration & workspaces
+COPY package*.json ./
+COPY packages/ ./packages/
+COPY apps/api/ ./apps/api/
+
+# Install dependencies and build
+RUN npm install
+RUN npm run build:packages
+RUN npx --workspace=@healthsync/api prisma generate
+RUN npm --workspace=@healthsync/api run build
+
+EXPOSE 4000
+CMD ["npm", "run", "start:api"]

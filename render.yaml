@@ -1,0 +1,46 @@
+services:
+  # Backend NestJS API
+  - type: web
+    name: healthsync-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run db:push && npm run build:api
+    startCommand: npm run start:api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+    healthCheckPath: /api/health
+
+  # Frontend Next.js Web
+  - type: web
+    name: healthsync-web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build:web
+    startCommand: npm run start:web
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: healthsync-api
+          property: host

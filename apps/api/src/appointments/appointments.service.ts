@@ -8,8 +8,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { UserRole, AppointmentStatus, AuditActionType } from '@healthsync/shared-types';
+import { UserRole, AppointmentStatus, AuditActionType, ConsultationSessionStatus } from '@healthsync/shared-types';
 import { AppointmentBookingInput } from '@healthsync/validation';
+import { DoctorAvailabilityService } from './doctor-availability.service';
 
 @Injectable()
 export class AppointmentsService {
@@ -18,10 +19,24 @@ export class AppointmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly doctorAvailabilityService: DoctorAvailabilityService,
   ) {}
 
-  private async ensureFutureSlots() {
+  private async ensureFutureSlots(targetDoctorId?: string) {
     try {
+      if (targetDoctorId) {
+        await this.doctorAvailabilityService.generateSlotsForSchedule(targetDoctorId);
+      } else {
+        const doctorsWithSchedules = await this.prisma.doctorAvailability.findMany({
+          where: { isActive: true },
+          select: { doctorId: true },
+          distinct: ['doctorId'],
+        });
+        for (const doc of doctorsWithSchedules) {
+          await this.doctorAvailabilityService.generateSlotsForSchedule(doc.doctorId);
+        }
+      }
+
       const futureCount = await this.prisma.appointmentSlot.count({
         where: {
           startTime: { gt: new Date() },
@@ -80,9 +95,9 @@ export class AppointmentsService {
   }
 
   async listSlots(doctorId?: string, facilityId?: string) {
-    await this.ensureFutureSlots();
+    await this.ensureFutureSlots(doctorId);
 
-    return this.prisma.appointmentSlot.findMany({
+    const rawSlots = await this.prisma.appointmentSlot.findMany({
       where: {
         doctorId: doctorId || undefined,
         facilityId: facilityId || undefined,
@@ -101,6 +116,66 @@ export class AppointmentsService {
       },
       orderBy: { startTime: 'asc' },
     });
+
+    // Check exceptions and daily capacity limits to filter/annotate slots
+    const validSlots: typeof rawSlots = [];
+    for (const slot of rawSlots) {
+      const normalizedDate = new Date(
+        slot.startTime.getFullYear(),
+        slot.startTime.getMonth(),
+        slot.startTime.getDate(),
+        0, 0, 0, 0
+      );
+
+      const exception = await this.prisma.doctorAvailabilityException.findUnique({
+        where: {
+          doctorId_date: {
+            doctorId: slot.doctorId,
+            date: normalizedDate,
+          },
+        },
+      });
+
+      // If doctor is marked unavailable / leave on this date, omit unbooked slots
+      if (exception && !exception.isAvailable && !slot.isBooked) {
+        continue;
+      }
+
+      // Check daily patient capacity limit
+      const dayOfWeek = slot.startTime.getDay();
+      const availability = await this.prisma.doctorAvailability.findFirst({
+        where: {
+          doctorId: slot.doctorId,
+          dayOfWeek,
+          isActive: true,
+        },
+      });
+
+      if (availability?.maxDailyPatients && !slot.isBooked) {
+        const startOfDay = new Date(normalizedDate);
+        const endOfDay = new Date(normalizedDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const bookedTodayCount = await this.prisma.appointment.count({
+          where: {
+            slot: {
+              doctorId: slot.doctorId,
+              startTime: { gte: startOfDay, lte: endOfDay },
+            },
+            status: { in: [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED] },
+          },
+        });
+
+        if (bookedTodayCount >= availability.maxDailyPatients) {
+          // Daily limit reached for this doctor on this day
+          continue;
+        }
+      }
+
+      validSlots.push(slot);
+    }
+
+    return validSlots;
   }
 
   async createSlots(user: any, doctorId: string, facilityId: string, startTimes: string[], durationMinutes = 30) {
@@ -156,6 +231,63 @@ export class AppointmentsService {
         );
       }
 
+      if (slot.startTime <= new Date()) {
+        throw new BadRequestException('Cannot book appointment slots in the past');
+      }
+
+      // Check date leave/exception for the doctor
+      const normalizedDate = new Date(
+        slot.startTime.getFullYear(),
+        slot.startTime.getMonth(),
+        slot.startTime.getDate(),
+        0, 0, 0, 0
+      );
+
+      const exception = await tx.doctorAvailabilityException.findUnique({
+        where: {
+          doctorId_date: {
+            doctorId: slot.doctorId,
+            date: normalizedDate,
+          },
+        },
+      });
+
+      if (exception && !exception.isAvailable) {
+        throw new BadRequestException('Doctor is on leave or unavailable on the requested date');
+      }
+
+      // Check daily capacity limit
+      const dayOfWeek = slot.startTime.getDay();
+      const availability = await tx.doctorAvailability.findFirst({
+        where: {
+          doctorId: slot.doctorId,
+          dayOfWeek,
+          isActive: true,
+        },
+      });
+
+      if (availability?.maxDailyPatients) {
+        const startOfDay = new Date(normalizedDate);
+        const endOfDay = new Date(normalizedDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const currentBookings = await tx.appointment.count({
+          where: {
+            slot: {
+              doctorId: slot.doctorId,
+              startTime: { gte: startOfDay, lte: endOfDay },
+            },
+            status: { in: [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED] },
+          },
+        });
+
+        if (currentBookings >= availability.maxDailyPatients) {
+          throw new ConflictException(
+            `Doctor has reached maximum daily capacity (${availability.maxDailyPatients} patients) for this date`,
+          );
+        }
+      }
+
       // 2. Mark slot as booked
       await tx.appointmentSlot.update({
         where: { id: slot.id },
@@ -191,7 +323,19 @@ export class AppointmentsService {
         },
       });
 
-      // 4. Record audit event
+      // 4. Create ConsultationSession for this confirmed appointment
+      const roomName = `room-${bookingRef.toLowerCase()}-${Math.random().toString(36).substring(2, 7)}`;
+      await tx.consultationSession.create({
+        data: {
+          appointmentId: appointment.id,
+          roomName,
+          status: ConsultationSessionStatus.SCHEDULED,
+          scheduledStartTime: slot.startTime,
+          scheduledEndTime: slot.endTime,
+        },
+      });
+
+      // 5. Record audit event
       await tx.accessAuditEvent.create({
         data: {
           actorUserId: user.id,
@@ -203,7 +347,7 @@ export class AppointmentsService {
         },
       });
 
-      // 5. Notify Doctor
+      // 6. Notify Doctor
       await tx.notification.create({
         data: {
           userId: slot.doctor.userId,
@@ -233,6 +377,7 @@ export class AppointmentsService {
               facility: true,
             },
           },
+          consultationSession: true,
         },
         orderBy: { slot: { startTime: 'desc' } },
       });
@@ -260,6 +405,7 @@ export class AppointmentsService {
               user: { select: { firstName: true, lastName: true, email: true, phoneNumber: true, avatarUrl: true } },
             },
           },
+          consultationSession: true,
         },
         orderBy: { slot: { startTime: 'asc' } },
       });
@@ -295,6 +441,7 @@ export class AppointmentsService {
               user: { select: { firstName: true, lastName: true, email: true, phoneNumber: true, avatarUrl: true } },
             },
           },
+          consultationSession: true,
         },
         orderBy: { slot: { startTime: 'desc' } },
       });
@@ -323,14 +470,28 @@ export class AppointmentsService {
         include: {
           slot: true,
           patient: { include: { user: true } },
+          consultationSession: true,
         },
       });
 
-      // If cancelled or rejected, free the slot
+      // If cancelled or rejected, free the slot and update consultation session
       if (status === AppointmentStatus.CANCELLED || status === AppointmentStatus.REJECTED) {
         await tx.appointmentSlot.update({
           where: { id: appt.slotId },
           data: { isBooked: false },
+        });
+
+        await tx.consultationSession.updateMany({
+          where: { appointmentId },
+          data: { status: ConsultationSessionStatus.CANCELLED },
+        });
+      } else if (status === AppointmentStatus.COMPLETED) {
+        await tx.consultationSession.updateMany({
+          where: { appointmentId },
+          data: {
+            status: ConsultationSessionStatus.COMPLETED,
+            actualEndTime: new Date(),
+          },
         });
       }
 

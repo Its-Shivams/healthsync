@@ -80,6 +80,8 @@ model DoctorProfile {
   consentGrants        ConsentGrant[]
   accessRequests       AccessRequest[]
   affiliations         DoctorFacilityAffiliation[]
+  availabilities       DoctorAvailability[]
+  availabilityExceptions DoctorAvailabilityException[]
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 }
@@ -160,6 +162,7 @@ model MedicalDocument {
   versions             DocumentVersion[]
   ocrJob               OCRJob?
   reports              MedicalReport[]
+  consultationMessages ConsultationMessage[]
   createdAt            DateTime                        @default(now())
   updatedAt            DateTime                        @updatedAt
 }
@@ -328,6 +331,7 @@ model Appointment {
   reasonForVisit    String
   notes             String?
   bookingReference  String          @unique
+  consultationSession ConsultationSession?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 }
@@ -367,6 +371,7 @@ model HealthcareFacility {
   appointmentSlots  AppointmentSlot[]
   encounters        Encounter[]
   doctorAffiliations DoctorFacilityAffiliation[]
+  availabilities     DoctorAvailability[]
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
 }
@@ -510,4 +515,83 @@ model DailyHealthLog {
   updatedAt              DateTime       @updatedAt
 
   @@index([patientId, logDate])
+}
+
+model DoctorAvailability {
+  id                  String             @id @default(uuid())
+  doctorId            String
+  doctor              DoctorProfile      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  facilityId          String
+  facility            HealthcareFacility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  dayOfWeek           Int                // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime           String             // "09:00"
+  endTime             String             // "17:00"
+  slotDurationMinutes Int                @default(30)
+  maxDailyPatients    Int                @default(15)
+  breakStartTime      String?            // "13:00"
+  breakEndTime        String?            // "14:00"
+  isActive            Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([doctorId, facilityId, dayOfWeek])
+}
+
+model DoctorAvailabilityException {
+  id              String        @id @default(uuid())
+  doctorId        String
+  doctor          DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  date            DateTime      // Date only (normalized to YYYY-MM-DD 00:00:00 UTC)
+  isAvailable     Boolean       @default(false) // false = holiday/leave; true = exceptional working day
+  reason          String?       // "Annual Leave", "Medical Conference", "Special OPD"
+  customStartTime String?       // "10:00"
+  customEndTime   String?       // "14:00"
+  breakStartTime  String?
+  breakEndTime    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([doctorId, date])
+}
+
+model ConsultationSession {
+  id                 String                @id @default(uuid())
+  appointmentId      String                @unique
+  appointment        Appointment           @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  roomName           String                @unique
+  status             String                @default("SCHEDULED") // SCHEDULED, ACTIVE, COMPLETED, CANCELLED
+  scheduledStartTime DateTime
+  scheduledEndTime   DateTime
+  actualStartTime    DateTime?
+  actualEndTime      DateTime?
+  doctorJoinedAt     DateTime?
+  patientJoinedAt    DateTime?
+  notes              String?
+  messages           ConsultationMessage[]
+  signals            ConsultationSignal[]
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+}
+
+model ConsultationMessage {
+  id               String              @id @default(uuid())
+  sessionId        String
+  session          ConsultationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  senderId         String
+  senderRole       String              // DOCTOR or PATIENT
+  senderName       String
+  content          String
+  sharedDocumentId String?
+  sharedDocument   MedicalDocument?    @relation(fields: [sharedDocumentId], references: [id])
+  createdAt        DateTime            @default(now())
+}
+
+model ConsultationSignal {
+  id        String              @id @default(uuid())
+  sessionId String
+  session   ConsultationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  senderId  String
+  type      String              // "offer", "answer", "candidate", "join", "leave"
+  data      String              // JSON string of SDP or ICE candidate
+  createdAt DateTime            @default(now())
 }

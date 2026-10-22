@@ -3,6 +3,12 @@ export interface AIMessageHistory {
   content: string;
 }
 
+export interface AIAttachment {
+  base64: string;
+  mimeType: string;
+  fileName?: string;
+}
+
 export interface AIProviderResponse {
   content: string;
   provider: string;
@@ -17,5 +23,6 @@ export interface IAIProvider {
     prompt: string,
     systemPrompt: string,
     history: AIMessageHistory[],
+    attachment?: AIAttachment,
   ): Promise<AIProviderResponse>;
 }

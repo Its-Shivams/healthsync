@@ -408,3 +408,82 @@ export interface ApiResponse<T = any> {
   };
   timestamp: string;
 }
+
+
+// Doctor Availability & LiveCare Consultations
+export enum ConsultationSessionStatus {
+  SCHEDULED = 'SCHEDULED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  ACTIVE = 'ACTIVE',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum TimeWindowStatus {
+  BEFORE_WINDOW = 'BEFORE_WINDOW',
+  WINDOW_OPEN = 'WINDOW_OPEN',
+  EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
+}
+
+export interface DoctorAvailabilityDTO {
+  id: string;
+  doctorId: string;
+  facilityId: string;
+  facilityName?: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  slotDurationMinutes: number;
+  maxDailyPatients: number;
+  breakStartTime?: string | null;
+  breakEndTime?: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DoctorAvailabilityExceptionDTO {
+  id: string;
+  doctorId: string;
+  date: string;
+  isAvailable: boolean;
+  reason?: string | null;
+  customStartTime?: string | null;
+  customEndTime?: string | null;
+  breakStartTime?: string | null;
+  breakEndTime?: string | null;
+  createdAt: string;
+}
+
+export interface ConsultationSessionDTO {
+  id: string;
+  appointmentId: string;
+  roomName: string;
+  status: ConsultationSessionStatus;
+  scheduledStartTime: string;
+  scheduledEndTime: string;
+  actualStartTime?: string | null;
+  actualEndTime?: string | null;
+  doctorJoinedAt?: string | null;
+  patientJoinedAt?: string | null;
+  windowStatus: TimeWindowStatus;
+  canJoin: boolean;
+  opensInSeconds?: number;
+  remainingSeconds?: number;
+  appointment?: any;
+  doctor?: any;
+  patient?: any;
+}
+
+export interface ConsultationMessageDTO {
+  id: string;
+  sessionId: string;
+  senderId: string;
+  senderRole: string;
+  senderName: string;
+  content: string;
+  sharedDocumentId?: string | null;
+  sharedDocument?: any;
+  createdAt: string;
+}

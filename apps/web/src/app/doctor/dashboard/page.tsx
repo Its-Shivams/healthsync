@@ -27,12 +27,16 @@ import {
   Building2,
   ShieldCheck,
   TrendingUp,
+  Video,
+  Trash2,
+  CalendarRange,
+  AlertCircle,
 } from 'lucide-react';
 
 export default function DoctorDashboard() {
   const router = useRouter();
   const { user, isLoading: authLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<'patients' | 'quick-access' | 'appointments'>('patients');
+  const [activeTab, setActiveTab] = useState<'patients' | 'quick-access' | 'appointments' | 'availability'>('patients');
 
   // Route protection
   useEffect(() => {
@@ -89,6 +93,141 @@ export default function DoctorDashboard() {
   const [breakGlassPatientId, setBreakGlassPatientId] = useState('');
   const [breakGlassJustification, setBreakGlassJustification] = useState('');
 
+  // Doctor Availability & Slot Management State
+  const [availabilities, setAvailabilities] = useState<any[]>([]);
+  const [exceptions, setExceptions] = useState<any[]>([]);
+  const [facilities, setFacilities] = useState<any[]>([]);
+  const [availLoading, setAvailLoading] = useState(false);
+  const [conflictWarning, setConflictWarning] = useState<any | null>(null);
+
+  // Weekly Schedule Form
+  const [schedFacilityId, setSchedFacilityId] = useState('');
+  const [schedDayOfWeek, setSchedDayOfWeek] = useState<number>(1);
+  const [schedStartTime, setSchedStartTime] = useState('09:00');
+  const [schedEndTime, setSchedEndTime] = useState('17:00');
+  const [schedDuration, setSchedDuration] = useState<number>(30);
+  const [schedMaxPatients, setSchedMaxPatients] = useState<number>(15);
+  const [schedBreakStart, setSchedBreakStart] = useState('13:00');
+  const [schedBreakEnd, setSchedBreakEnd] = useState('14:00');
+
+  // Date-Specific Exception / Leave Form
+  const [excDate, setExcDate] = useState('');
+  const [excIsAvailable, setExcIsAvailable] = useState(false);
+  const [excReason, setExcReason] = useState('');
+  const [excCustomStart, setExcCustomStart] = useState('10:00');
+  const [excCustomEnd, setExcCustomEnd] = useState('14:00');
+
+  const loadAvailabilityData = async () => {
+    try {
+      setAvailLoading(true);
+      const res = await apiClient('/api/appointments/availability/my');
+      if (res.data) {
+        setAvailabilities(res.data.availabilities || []);
+        setExceptions(res.data.exceptions || []);
+        setFacilities(res.data.facilities || []);
+        if (res.data.facilities?.length > 0 && !schedFacilityId) {
+          setSchedFacilityId(res.data.facilities[0].id);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Could not load availability data:', err.message);
+    } finally {
+      setAvailLoading(false);
+    }
+  };
+
+  const handleSaveSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!schedFacilityId) {
+      alert('Please select a healthcare facility');
+      return;
+    }
+    try {
+      await apiClient('/api/appointments/availability', {
+        method: 'POST',
+        body: JSON.stringify({
+          facilityId: schedFacilityId,
+          dayOfWeek: Number(schedDayOfWeek),
+          startTime: schedStartTime,
+          endTime: schedEndTime,
+          slotDurationMinutes: Number(schedDuration),
+          maxDailyPatients: Number(schedMaxPatients),
+          breakStartTime: schedBreakStart || undefined,
+          breakEndTime: schedBreakEnd || undefined,
+          isActive: true,
+        }),
+      });
+      alert('Weekly schedule saved and future slots generated.');
+      loadAvailabilityData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save availability schedule');
+    }
+  };
+
+  const handleDeleteSchedule = async (id: string) => {
+    if (!window.confirm('Delete this weekly availability schedule?')) return;
+    try {
+      await apiClient(`/api/appointments/availability/${id}`, { method: 'DELETE' });
+      loadAvailabilityData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete schedule');
+    }
+  };
+
+  const handleSaveException = async (forceIfConflicts = false) => {
+    if (!excDate) {
+      alert('Please select a date');
+      return;
+    }
+    try {
+      const res = await apiClient('/api/appointments/availability/exceptions', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: excDate,
+          isAvailable: excIsAvailable,
+          reason: excReason || undefined,
+          customStartTime: excIsAvailable ? excCustomStart || undefined : undefined,
+          customEndTime: excIsAvailable ? excCustomEnd || undefined : undefined,
+          forceIfConflicts,
+        }),
+      });
+
+      if (res.data?.hasConflict) {
+        setConflictWarning(res.data);
+      } else {
+        setConflictWarning(null);
+        alert(res.message || 'Date exception recorded.');
+        setExcDate('');
+        setExcReason('');
+        loadAvailabilityData();
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to save exception');
+    }
+  };
+
+  const handleDeleteException = async (id: string) => {
+    if (!window.confirm('Remove this exception/leave entry?')) return;
+    try {
+      await apiClient(`/api/appointments/availability/exceptions/${id}`, { method: 'DELETE' });
+      loadAvailabilityData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete exception');
+    }
+  };
+
+  const handleGenerateSlots = async () => {
+    try {
+      const res = await apiClient('/api/appointments/availability/generate-slots', {
+        method: 'POST',
+        body: JSON.stringify({ daysAhead: 14 }),
+      });
+      alert(res.message || 'Slots generated successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Failed to generate slots');
+    }
+  };
+
   const loadAuthorizedPatients = async () => {
     try {
       setIsLoading(true);
@@ -119,7 +258,14 @@ export default function DoctorDashboard() {
   useEffect(() => {
     loadAuthorizedPatients();
     loadAppointments();
+    loadAvailabilityData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'availability') {
+      loadAvailabilityData();
+    }
+  }, [activeTab]);
 
   const loadPatientRecords = async (pId: string) => {
     try {
@@ -386,6 +532,18 @@ export default function DoctorDashboard() {
         >
           <Calendar className="w-4 h-4" />
           <span>Received Appointments ({appointments.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('availability')}
+          className={`pb-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-colors ${
+            activeTab === 'availability'
+              ? 'border-teal-600 text-teal-700'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <CalendarRange className="w-4 h-4 text-teal-600" />
+          <span>Manage Availability & Slots</span>
         </button>
       </div>
 
@@ -903,6 +1061,15 @@ export default function DoctorDashboard() {
                         </span>
                       </td>
                       <td className="py-3 px-3 text-right space-x-1.5">
+                        {appt.status === AppointmentStatus.CONFIRMED && (
+                          <button
+                            onClick={() => router.push(`/consultation/${appt.id}`)}
+                            className="px-2 py-1 rounded bg-teal-600 hover:bg-teal-700 text-white text-[11px] font-semibold transition-colors inline-flex items-center gap-1 shadow-sm"
+                          >
+                            <Video className="w-3 h-3" />
+                            <span>Live Room</span>
+                          </button>
+                        )}
                         {appt.status !== AppointmentStatus.CONFIRMED && appt.status !== AppointmentStatus.COMPLETED && (
                           <button
                             onClick={() => handleUpdateAppointment(appt.id, AppointmentStatus.CONFIRMED)}
@@ -939,6 +1106,410 @@ export default function DoctorDashboard() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: DOCTOR AVAILABILITY & APPOINTMENT SLOT MANAGEMENT */}
+      {activeTab === 'availability' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-5 rounded-2xl bg-white border border-slate-200 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <CalendarRange className="w-5 h-5 text-teal-600" />
+                <h2 className="text-base font-bold text-slate-900">Manage Clinical Availability & Slots</h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Configure your weekly consultation schedule, appointment duration, daily patient capacity, break times, and date leaves.
+              </p>
+            </div>
+            <button
+              onClick={handleGenerateSlots}
+              className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm shrink-0 self-start sm:self-auto"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Generate 14-Day Slots</span>
+            </button>
+          </div>
+
+          {/* Conflict Warning Notification Banner */}
+          {conflictWarning && (
+            <div className="p-5 rounded-2xl bg-amber-50 border border-amber-200 space-y-3">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-amber-900">
+                    Confirmed Appointments Conflict Detected
+                  </h4>
+                  <p className="text-xs text-amber-700">
+                    {conflictWarning.message}
+                  </p>
+                </div>
+              </div>
+
+              {conflictWarning.conflictingAppointments?.length > 0 && (
+                <div className="bg-white/80 p-3 rounded-xl border border-amber-200 space-y-1.5 text-xs text-slate-700 max-h-40 overflow-y-auto">
+                  <span className="font-semibold text-slate-900">Affected Confirmed Bookings:</span>
+                  {conflictWarning.conflictingAppointments.map((c: any) => (
+                    <div key={c.id} className="flex items-center justify-between py-1 border-b border-amber-100 last:border-0">
+                      <span>{c.patientName} (Ref: <code className="font-mono text-teal-700">{c.reference}</code>)</span>
+                      <span className="font-semibold text-slate-600">{c.time}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={() => handleSaveException(true)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition"
+                >
+                  Confirm Leave & Keep Existing Appointments
+                </button>
+                <button
+                  onClick={() => setConflictWarning(null)}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column: Schedule & Leave Forms */}
+            <div className="lg:col-span-5 space-y-6">
+              {/* Form 1: Weekly Schedule Editor */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                  <Clock className="w-4 h-4 text-teal-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Set Weekly Availability</h3>
+                </div>
+
+                <form onSubmit={handleSaveSchedule} className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Healthcare Facility *
+                    </label>
+                    <select
+                      value={schedFacilityId}
+                      onChange={(e) => setSchedFacilityId(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      <option value="">Select Facility...</option>
+                      {facilities.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name} ({f.city})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Day of Week *
+                    </label>
+                    <select
+                      value={schedDayOfWeek}
+                      onChange={(e) => setSchedDayOfWeek(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      <option value={1}>Monday</option>
+                      <option value={2}>Tuesday</option>
+                      <option value={3}>Wednesday</option>
+                      <option value={4}>Thursday</option>
+                      <option value={5}>Friday</option>
+                      <option value={6}>Saturday</option>
+                      <option value={0}>Sunday</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Start Time *</label>
+                      <input
+                        type="time"
+                        required
+                        value={schedStartTime}
+                        onChange={(e) => setSchedStartTime(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">End Time *</label>
+                      <input
+                        type="time"
+                        required
+                        value={schedEndTime}
+                        onChange={(e) => setSchedEndTime(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Slot Duration *
+                      </label>
+                      <select
+                        value={schedDuration}
+                        onChange={(e) => setSchedDuration(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      >
+                        <option value={10}>10 minutes</option>
+                        <option value={15}>15 minutes</option>
+                        <option value={20}>20 minutes</option>
+                        <option value={30}>30 minutes</option>
+                        <option value={60}>60 minutes</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Daily Patient Limit *
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        required
+                        value={schedMaxPatients}
+                        onChange={(e) => setSchedMaxPatients(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Break Start (Optional)</label>
+                      <input
+                        type="time"
+                        value={schedBreakStart}
+                        onChange={(e) => setSchedBreakStart(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Break End (Optional)</label>
+                      <input
+                        type="time"
+                        value={schedBreakEnd}
+                        onChange={(e) => setSchedBreakEnd(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition shadow-sm"
+                  >
+                    Save Weekly Schedule
+                  </button>
+                </form>
+              </div>
+
+              {/* Form 2: Leave & Exceptional Dates */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                  <Calendar className="w-4 h-4 text-amber-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Record Leave / Date Exception</h3>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Select Date *</label>
+                    <input
+                      type="date"
+                      value={excDate}
+                      onChange={(e) => setExcDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4 text-xs font-semibold text-slate-700">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="excType"
+                        checked={!excIsAvailable}
+                        onChange={() => setExcIsAvailable(false)}
+                      />
+                      <span>Mark as Leave / Holiday</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="excType"
+                        checked={excIsAvailable}
+                        onChange={() => setExcIsAvailable(true)}
+                      />
+                      <span>Special Working Hours</span>
+                    </label>
+                  </div>
+
+                  {!excIsAvailable ? (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Reason for Leave</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Annual Vacation, Medical Conference, Personal"
+                        value={excReason}
+                        onChange={(e) => setExcReason(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Custom Start</label>
+                        <input
+                          type="time"
+                          value={excCustomStart}
+                          onChange={(e) => setExcCustomStart(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Custom End</label>
+                        <input
+                          type="time"
+                          value={excCustomEnd}
+                          onChange={(e) => setExcCustomEnd(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleSaveException(false)}
+                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition shadow-sm"
+                  >
+                    Save Date Exception
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Existing Schedules & Leaves Lists */}
+            <div className="lg:col-span-7 space-y-6">
+              {/* Existing Weekly Schedules */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900">Configured Weekly Availability</h3>
+                  <span className="text-xs text-slate-500 font-semibold">{availabilities.length} Days Configured</span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {availabilities.map((sched) => {
+                    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                    return (
+                      <div
+                        key={sched.id}
+                        className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition flex items-center justify-between gap-3"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-xs sm:text-sm">{days[sched.dayOfWeek]}</span>
+                            <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[10px] font-bold">
+                              {sched.slotDurationMinutes}m slots
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-semibold">
+                              Max {sched.maxDailyPatients} patients/day
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            <strong>{sched.startTime} – {sched.endTime}</strong>
+                            {sched.breakStartTime && (
+                              <span className="text-slate-500 ml-2">
+                                (Break: {sched.breakStartTime} – {sched.breakEndTime})
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            Facility: {sched.facility?.name} ({sched.facility?.city})
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleDeleteSchedule(sched.id)}
+                          className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          title="Remove availability"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+
+                  {availabilities.length === 0 && (
+                    <div className="text-center py-10 text-xs text-slate-400">
+                      No weekly availability rules configured yet. Use the form on the left to add your working hours.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Upcoming Leaves & Exceptions List */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900">Recorded Leaves & Special Dates</h3>
+                  <span className="text-xs text-slate-500 font-semibold">{exceptions.length} Entries</span>
+                </div>
+
+                <div className="space-y-2">
+                  {exceptions.map((exc) => (
+                    <div
+                      key={exc.id}
+                      className="p-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 transition"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900 text-xs">
+                            {new Date(exc.date).toLocaleDateString([], {
+                              weekday: 'short',
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                            })}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              !exc.isAvailable
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {!exc.isAvailable ? 'Leave / Unavailable' : 'Special Hours'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {exc.reason || (exc.isAvailable ? `${exc.customStartTime} - ${exc.customEndTime}` : 'Unavailable')}
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => handleDeleteException(exc.id)}
+                        className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                        title="Delete exception"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {exceptions.length === 0 && (
+                    <div className="text-center py-6 text-xs text-slate-400">
+                      No upcoming leaves or date exceptions recorded.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

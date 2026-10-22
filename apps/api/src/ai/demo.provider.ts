@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { IAIProvider, AIMessageHistory, AIProviderResponse } from './ai-provider.interface';
+import { IAIProvider, AIMessageHistory, AIProviderResponse, AIAttachment } from './ai-provider.interface';
 
 @Injectable()
 export class DemoClinicalProvider implements IAIProvider {
@@ -13,11 +13,49 @@ export class DemoClinicalProvider implements IAIProvider {
     prompt: string,
     systemPrompt: string,
     history: AIMessageHistory[],
+    attachment?: AIAttachment,
   ): Promise<AIProviderResponse> {
     const text = prompt.toLowerCase();
     let responseText = '';
 
-    if (text.includes('food') || text.includes('diet') || text.includes('eat') || text.includes('khana')) {
+    if (attachment) {
+      const isPdf = attachment.mimeType === 'application/pdf' || (attachment.fileName && attachment.fileName.toLowerCase().endsWith('.pdf'));
+      const docType = isPdf ? 'Clinical Diagnostic Report / Prescription PDF' : 'Prescription / Diagnostic Document Image';
+
+      responseText = `### 📋 Medical Document Analysis: ${attachment.fileName || docType}
+
+**1. Document Classification & Metadata**
+- **Type:** ${isPdf ? 'Multi-page Diagnostic / Prescription Report' : 'Clinical Prescription / Laboratory Report'}
+- **Format:** Verified Multimodal Scanned Document (${attachment.mimeType})
+
+---
+
+**2. Key Medications & Findings Detected**
+- **Prescribed Regimen:**
+  - **Amlodipine (5 mg)** — *1 tablet once daily in the morning*. Indicated for arterial blood pressure control.
+  - **Metformin (500 mg)** — *1 tablet twice daily with meals*. Indicated for glycemic regulation and insulin sensitivity.
+  - **Atorvastatin (10 mg)** — *1 tablet once daily at bedtime*. Indicated for lipid profile optimization.
+- **Key Clinical / Diagnostic Indicators:**
+  - **Blood Pressure:** 134/86 mmHg *(Improved control with oral therapy)*.
+  - **HbA1c:** 6.7% *(Within manageable glycemic range)*.
+  - **Serum Creatinine:** 0.9 mg/dL *(Normal reference range: 0.7 – 1.3 mg/dL)*.
+
+---
+
+**3. Plain-Language Patient Summary**
+Your doctor has prescribed a balanced regimen focused on cardiovascular and metabolic health. Your kidney function indicators (serum creatinine) are in the normal range. The medications work together to regulate daytime blood pressure, manage meal-related glucose spikes, and support healthy cholesterol levels.
+
+---
+
+**4. ⚠️ Precautions & Targeted Questions for Your Doctor**
+- **Adherence:** Take prescribed medications at regular scheduled times. Never abruptly discontinue therapy without physician advice.
+- **Daily Log:** Track your blood pressure readings and fasting glucose in your HealthSync Vitals dashboard.
+- **Recommended Follow-up Questions:**
+  - *"Should I maintain a daily BP log for review at our next visit?"*
+  - *"Are there any dietary interactions I should be mindful of with these medications?"*
+
+> **Clinical Notice:** *This AI briefing provides patient educational guidance only. Please consult your prescribing physician before modifying any dosage or treatment plan.*`;
+    } else if (text.includes('food') || text.includes('diet') || text.includes('eat') || text.includes('khana')) {
       responseText = `**Dietary & Nutritional Guidance:**
 
 1. **Sodium / Salt Restriction:** Keep sodium below 1,500 - 2,000 mg/day (less than 1 level teaspoon). Avoid pickles (achar), processed snacks, papads, canned soups, and salty seasonings.

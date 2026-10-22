@@ -1,6 +1,6 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { IAIProvider, AIMessageHistory, AIProviderResponse } from './ai-provider.interface';
+import { IAIProvider, AIMessageHistory, AIProviderResponse, AIAttachment } from './ai-provider.interface';
 
 @Injectable()
 export class GeminiProvider implements IAIProvider {
@@ -40,6 +40,7 @@ export class GeminiProvider implements IAIProvider {
     history: AIMessageHistory[],
     timeoutMs: number,
     startTime: number,
+    attachment?: AIAttachment,
   ): Promise<AIProviderResponse> {
     const genAI = new GoogleGenerativeAI(apiKey.trim());
     const model = genAI.getGenerativeModel({
@@ -47,14 +48,25 @@ export class GeminiProvider implements IAIProvider {
       systemInstruction: systemPrompt,
     });
 
-    const contents = history.map((h) => ({
+    const contents: any[] = history.map((h) => ({
       role: h.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: h.content }],
     }));
 
+    const userParts: any[] = [];
+    if (attachment?.base64 && attachment?.mimeType) {
+      userParts.push({
+        inlineData: {
+          data: attachment.base64,
+          mimeType: attachment.mimeType,
+        },
+      });
+    }
+    userParts.push({ text: prompt });
+
     contents.push({
       role: 'user',
-      parts: [{ text: prompt }],
+      parts: userParts,
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -83,6 +95,7 @@ export class GeminiProvider implements IAIProvider {
     prompt: string,
     systemPrompt: string,
     history: AIMessageHistory[],
+    attachment?: AIAttachment,
   ): Promise<AIProviderResponse> {
     const apiKey = this.getApiKey();
     if (!apiKey || apiKey.trim().length === 0) {
@@ -102,13 +115,13 @@ export class GeminiProvider implements IAIProvider {
     const timeoutMs = this.getTimeoutMs();
 
     try {
-      return await this.callGemini(primaryModel, apiKey, prompt, systemPrompt, history, timeoutMs, startTime);
+      return await this.callGemini(primaryModel, apiKey, prompt, systemPrompt, history, timeoutMs, startTime, attachment);
     } catch (err: any) {
       // If primary model encounters high demand (503), attempt failover to gemini-flash-lite-latest
       if ((err.message?.includes('503') || err.message?.includes('high demand')) && primaryModel !== 'gemini-flash-lite-latest') {
         try {
           this.logger.warn(`Gemini model ${primaryModel} busy. Seamlessly retrying with gemini-flash-lite-latest.`);
-          return await this.callGemini('gemini-flash-lite-latest', apiKey, prompt, systemPrompt, history, timeoutMs, startTime);
+          return await this.callGemini('gemini-flash-lite-latest', apiKey, prompt, systemPrompt, history, timeoutMs, startTime, attachment);
         } catch (failoverErr: any) {
           err = failoverErr;
         }
